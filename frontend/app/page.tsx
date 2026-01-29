@@ -5,7 +5,14 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import AudioCapture from '@/components/audio-capture';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { User, Bot, Mic, MicOff, Power, PowerOff, X } from 'lucide-react';
+import { User, Bot, Mic, MicOff, Power, PowerOff, X, ChevronDown } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import AudioCaptureMediaRecorder from '@/components/audio-capture-mediarecorder';
 import { ToolOutput } from '@/components/tool-outputs/ToolOutput';
 import type { ToolOutput as ToolOutputType } from '@/components/tool-outputs/types';
@@ -17,15 +24,49 @@ interface TextMessage {
   role: string;
 }
 
+interface ModelOption {
+  id: string;
+  name: string;
+  description: string;
+}
+
+const AVAILABLE_MODELS: ModelOption[] = [
+  {
+    id: 'amazon.nova-sonic-v1:0',
+    name: 'Nova Sonic',
+    description: 'Speech-to-speech model for conversational AI'
+  },
+  {
+    id: 'amazon.nova-2-sonic-v1:0',
+    name: 'Nova 2 Sonic',
+    description: 'Enhanced multilingual speech-to-speech model'
+  }
+];
+
+interface LanguageOption {
+  code: string;
+  name: string;
+}
+
+const AVAILABLE_LANGUAGES: LanguageOption[] = [
+  { code: 'en', name: 'English' },
+  { code: 'es', name: 'Spanish' },
+  { code: 'de', name: 'German' },
+  { code: 'fr', name: 'French' },
+  { code: 'it', name: 'Italian' },
+  { code: 'pt', name: 'Portuguese' },
+  { code: 'hi', name: 'Hindi' },
+];
+
 // Add these message animation variants before the Home component
 const messageVariants = {
-  initial: { 
-    opacity: 0, 
+  initial: {
+    opacity: 0,
     y: 20,
     scale: 0.95
   },
-  animate: { 
-    opacity: 1, 
+  animate: {
+    opacity: 1,
     y: 0,
     scale: 1,
     transition: {
@@ -34,8 +75,8 @@ const messageVariants = {
       damping: 20
     }
   },
-  exit: { 
-    opacity: 0, 
+  exit: {
+    opacity: 0,
     scale: 0.95,
     transition: { duration: 0.2 }
   }
@@ -43,7 +84,7 @@ const messageVariants = {
 
 const avatarVariants = {
   initial: { scale: 0 },
-  animate: { 
+  animate: {
     scale: 1,
     transition: {
       type: "spring",
@@ -59,11 +100,13 @@ export default function Home() {
   const [recording, setRecording] = useState(false);
   const [textOutputs, setTextOutputs] = useState<TextMessage[]>([]);
   const [toolUiOutput, setToolUiOutput] = useState<ToolOutputType | null>(null);
-  const [currentTool, setCurrentTool] = useState<{name: string, content: string} | null>(null);
+  const [currentTool, setCurrentTool] = useState<{ name: string, content: string } | null>(null);
   const [waitingForTool, setWaitingForTool] = useState(false);
   const [wsKey, setWsKey] = useState(0);
   const [isThinking, setIsThinking] = useState(false);
   const [toolConfigs, setToolConfigs] = useState<any[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>(AVAILABLE_MODELS[0].id);
+  const [selectedLanguage, setSelectedLanguage] = useState<string>(AVAILABLE_LANGUAGES[0].code);
   // Generate typing sound programmatically instead of using MP3
   const [audioContext] = useState(() => typeof window !== 'undefined' ? new (window.AudioContext || (window as any).webkitAudioContext)() : null);
   const typingSoundInterval = useRef<NodeJS.Timeout | null>(null);
@@ -84,10 +127,10 @@ export default function Home() {
 
   const connect = () => {
     if (wsRef.current) wsRef.current.close();
-    wsRef.current = new WebSocket('ws://localhost:8000/ws');
+    wsRef.current = new WebSocket(`ws://localhost:8000/ws?model=${encodeURIComponent(selectedModel)}&language=${encodeURIComponent(selectedLanguage)}`);
     setStatus('Connecting...');
     setWsKey(k => k + 1);
-    
+
     wsRef.current.onopen = () => setStatus('Connected');
     wsRef.current.onclose = () => {
       setStatus('Disconnected');
@@ -99,7 +142,7 @@ export default function Home() {
         try {
           const msg = JSON.parse(event.data);
           console.log('[WS MESSAGE]', msg);
-          
+
           if (msg.event) handleEventMessage(msg.event);
         } catch (e) {
           console.error('Error parsing message:', e);
@@ -123,29 +166,29 @@ export default function Home() {
     } else {
       console.log('[SKIPPING DUPLICATE]', message);
     }
-      }, []);
+  }, []);
 
   // Function to generate a typing sound programmatically
   const playTypingBeep = useCallback(() => {
     if (!audioContext) return;
-    
+
     try {
       // Create a short beep sound (like a keyboard click)
       const oscillator = audioContext.createOscillator();
       const gainNode = audioContext.createGain();
-      
+
       oscillator.connect(gainNode);
       gainNode.connect(audioContext.destination);
-      
+
       // Set frequency for a subtle click sound
       oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
       oscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.1);
-      
+
       // Set volume envelope for a quick click
       gainNode.gain.setValueAtTime(0, audioContext.currentTime);
       gainNode.gain.linearRampToValueAtTime(0.1, audioContext.currentTime + 0.01);
       gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.1);
-      
+
       oscillator.start(audioContext.currentTime);
       oscillator.stop(audioContext.currentTime + 0.1);
     } catch (err) {
@@ -182,13 +225,13 @@ export default function Home() {
 
   const handleEventMessage = (event: any) => {
     console.log('[WS EVENT]', event);
-    
+
     if (event.init) {
       // Store tool configurations
       setToolConfigs(event.init.toolConfigs);
       return;
     }
-    
+
     if (event.contentStart && event.contentStart.type === 'TEXT') {
       const contentId = event.contentStart.contentId;
       let stage = 'FINAL';
@@ -211,7 +254,7 @@ export default function Home() {
       console.log('[TOOL USE]', event.toolUse);
       setWaitingForTool(true);
       const toolName = event.toolUse.toolName;
-      
+
       // Find the tool configuration and get its short description
       const toolConfig = toolConfigs.find((t: any) => t.name === toolName);
       setCurrentTool({
@@ -235,7 +278,7 @@ export default function Home() {
     } else if (event.toolUiOutput) {
       // Handle tool UI output
       console.log('[TOOL UI OUTPUT]', event.toolUiOutput);
-      
+
       // Handle barge-in events
       if (event.toolUiOutput.type === 'barge_in') {
         console.log('[BARGE IN] Stopping audio playback');
@@ -243,7 +286,7 @@ export default function Home() {
           playbackServiceRef.current.stop();
         }
       }
-      
+
       // Handle tool execution progress events
       if (event.toolUiOutput.type === 'tool_exec_progress') {
         const status = event.toolUiOutput.content.status;
@@ -268,7 +311,7 @@ export default function Home() {
       if (playbackServiceRef.current) {
         playbackServiceRef.current.playPCM(audioBytes);
       }
-      
+
       // If there's pending text for this contentId, show it
       const contentId = event.audioOutput.contentId || 'default';
       if (contentId && pendingTexts.current[contentId]) {
@@ -281,7 +324,7 @@ export default function Home() {
       const text = event.textOutput.content;
       const role = event.textOutput.role || 'ASSISTANT';
       const contentId = event.textOutput.contentId;
-      
+
       console.log('[TEXT EVENT]', {
         text,
         role,
@@ -303,7 +346,7 @@ export default function Home() {
       } else if (role === 'ASSISTANT') {
         // For assistant messages, check if we have corresponding audio
         const hasAudioOutput = event.audioOutput && event.audioOutput.contentId === contentId;
-        
+
         // Show text immediately if no audio is expected
         if (!contentId || !hasAudioOutput) {
           console.log('[SHOWING ASSISTANT TEXT IMMEDIATELY]', { text, role });
@@ -380,7 +423,7 @@ export default function Home() {
   const base64LPCM = (base64String: string): string => {
     const byteCharacters = atob(base64String);
     const byteArrays = new Uint8Array(byteCharacters.length);
-    
+
     for (let i = 0; i < byteCharacters.length; i++) {
       byteArrays[i] = byteCharacters.charCodeAt(i);
     }
@@ -391,7 +434,7 @@ export default function Home() {
     const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
     const blockAlign = numChannels * (bitsPerSample / 8);
     const wavSize = byteArrays.length + 36;
-    
+
     const wavHeader = new Uint8Array(44);
     const view = new DataView(wavHeader.buffer);
 
@@ -511,7 +554,41 @@ export default function Home() {
       {/* Right chat panel */}
       <aside className="w-full max-w-md flex flex-col h-screen justify-between bg-white border-r border-gray-200">
         <Card className="flex-1 shadow-xl border-0 p-8 space-y-6 bg-white h-full flex flex-col">
-          <div className="flex items-center justify-between mb-2 border-b pb-4 border-gray-100">
+          <div className="flex flex-col gap-3 mb-2 border-b pb-4 border-gray-100">
+            <div className="flex gap-2">
+              <Select
+                value={selectedModel}
+                onValueChange={setSelectedModel}
+                disabled={status === 'Connected'}
+              >
+                <SelectTrigger className="flex-1">
+                  <SelectValue placeholder="Select model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {AVAILABLE_MODELS.map((model) => (
+                    <SelectItem key={model.id} value={model.id}>
+                      <span className="font-medium">{model.name}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={selectedLanguage}
+                onValueChange={setSelectedLanguage}
+                disabled={status === 'Connected'}
+              >
+                <SelectTrigger className="w-32">
+                  <SelectValue placeholder="Language" />
+                </SelectTrigger>
+                <SelectContent>
+                  {AVAILABLE_LANGUAGES.map((lang) => (
+                    <SelectItem key={lang.code} value={lang.code}>
+                      <span>{lang.name}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="flex items-center gap-2">
               <Button
                 onClick={status === 'Connected' ? disconnect : connect}
@@ -549,9 +626,8 @@ export default function Home() {
                   animate="animate"
                   exit="exit"
                   variants={messageVariants}
-                  className={`flex items-start gap-3 ${
-                    msg.role === 'USER' ? 'justify-end' : 'justify-start'
-                  }`}
+                  className={`flex items-start gap-3 ${msg.role === 'USER' ? 'justify-end' : 'justify-start'
+                    }`}
                 >
                   {msg.role === 'ASSISTANT' && (
                     <motion.div
@@ -566,15 +642,14 @@ export default function Home() {
                     </motion.div>
                   )}
                   <motion.div
-                    className={`p-3 rounded-2xl shadow-sm max-w-[70%] text-sm font-medium backdrop-blur-sm ${
-                      msg.role === 'USER'
-                        ? 'bg-black text-white rounded-br-none shadow-lg'
-                        : msg.role === 'SYSTEM'
+                    className={`p-3 rounded-2xl shadow-sm max-w-[70%] text-sm font-medium backdrop-blur-sm ${msg.role === 'USER'
+                      ? 'bg-black text-white rounded-br-none shadow-lg'
+                      : msg.role === 'SYSTEM'
                         ? 'bg-gray-100/80 text-gray-500 text-sm italic'
                         : msg.role === 'ASSISTANT'
-                        ? 'bg-gray-100/80 text-black rounded-bl-none shadow-md'
-                        : 'bg-gray-100/80 text-black'
-                    }`}
+                          ? 'bg-gray-100/80 text-black rounded-bl-none shadow-md'
+                          : 'bg-gray-100/80 text-black'
+                      }`}
                     whileHover={{ scale: 1.02 }}
                     transition={{ type: "spring", stiffness: 400, damping: 17 }}
                   >
