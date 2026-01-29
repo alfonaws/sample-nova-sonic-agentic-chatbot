@@ -1,7 +1,7 @@
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
-from nova_sonic_simple import SimpleNovaSonic
+from nova_sonic_simple import SimpleNovaSonic, CHUNK_SIZE
 import logging
 import os
 import wave

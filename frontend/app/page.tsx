@@ -15,9 +15,11 @@ import {
 } from "@/components/ui/select";
 import AudioCaptureMediaRecorder from '@/components/audio-capture-mediarecorder';
 import { ToolOutput } from '@/components/tool-outputs/ToolOutput';
-import type { ToolOutput as ToolOutputType } from '@/components/tool-outputs/types';
+import type { ToolOutput as ToolOutputType, FinanceAppToolOutput } from '@/components/tool-outputs/types';
 import { AudioPlaybackService } from '@/components/audio-playback';
 import { motion, AnimatePresence } from 'framer-motion';
+import { FinanceApp, FinanceAction } from '@/components/apps/FinanceApp';
+import type { FinanceState } from '@/components/apps/FinanceApp';
 
 interface TextMessage {
   text: string;
@@ -107,6 +109,11 @@ export default function Home() {
   const [toolConfigs, setToolConfigs] = useState<any[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>(AVAILABLE_MODELS[0].id);
   const [selectedLanguage, setSelectedLanguage] = useState<string>(AVAILABLE_LANGUAGES[0].code);
+  // Finance state management
+  const [financeState, setFinanceState] = useState<FinanceState | null>(null);
+  const [financeAction, setFinanceAction] = useState<FinanceAction>(null);
+  const [isLoadingFinanceState, setIsLoadingFinanceState] = useState(true);
+  const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
   // Generate typing sound programmatically instead of using MP3
   const [audioContext] = useState(() => typeof window !== 'undefined' ? new (window.AudioContext || (window as any).webkitAudioContext)() : null);
   const typingSoundInterval = useRef<NodeJS.Timeout | null>(null);
@@ -223,6 +230,28 @@ export default function Home() {
     };
   }, []);
 
+  // Fetch initial finance state on component mount
+  useEffect(() => {
+    const fetchFinanceState = async () => {
+      try {
+        setIsLoadingFinanceState(true);
+        const response = await fetch('http://localhost:8000/api/finance/state');
+        if (response.ok) {
+          const data = await response.json();
+          setFinanceState(data);
+        } else {
+          console.error('Failed to fetch finance state:', response.status);
+        }
+      } catch (error) {
+        console.error('Error fetching finance state:', error);
+      } finally {
+        setIsLoadingFinanceState(false);
+      }
+    };
+
+    fetchFinanceState();
+  }, []);
+
   const handleEventMessage = (event: any) => {
     console.log('[WS EVENT]', event);
 
@@ -297,6 +326,19 @@ export default function Home() {
         }
       }
 
+      // Update finance state when finance tool outputs are received
+      if (event.toolUiOutput.type === 'app' && event.toolUiOutput.appName === 'finance') {
+        const financeOutput = event.toolUiOutput as FinanceAppToolOutput;
+        if (financeOutput.props?.state) {
+          setFinanceState(financeOutput.props.state);
+        }
+        if (financeOutput.props?.action) {
+          setFinanceAction(financeOutput.props.action);
+          // Clear the action after animation completes
+          setTimeout(() => setFinanceAction(null), 1500);
+        }
+      }
+
       // Set the entire toolUiOutput object to preserve all fields (appName, props, etc)
       setToolUiOutput(event.toolUiOutput);
     } else if (event.contentEnd && event.contentEnd.type === 'TOOL') {
@@ -312,6 +354,9 @@ export default function Home() {
         playbackServiceRef.current.playPCM(audioBytes);
       }
 
+      // Agent is speaking when audio is being output
+      setIsAgentSpeaking(true);
+
       // If there's pending text for this contentId, show it
       const contentId = event.audioOutput.contentId || 'default';
       if (contentId && pendingTexts.current[contentId]) {
@@ -320,6 +365,9 @@ export default function Home() {
         displayedTextContentIds.current.add(contentId);
         delete pendingTexts.current[contentId];
       }
+    } else if (event.contentEnd && event.contentEnd.type === 'AUDIO') {
+      // Agent stopped speaking when audio content ends
+      setIsAgentSpeaking(false);
     } else if (event.textOutput) {
       const text = event.textOutput.content;
       const role = event.textOutput.role || 'ASSISTANT';
@@ -511,7 +559,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen h-screen  flex flex-row items-stretch bg-gray-100">
-      {/* Left pane for tool output */}
+      {/* Left pane for banking dashboard */}
       <section className="w-full bg-white flex flex-col border-r border-gray-200 h-full overflow-hidden">
         <div className="p-2 border-0 border-gray-100 flex justify-between items-center shrink-0">
           {/* <Button
@@ -521,7 +569,7 @@ export default function Home() {
           >
             Play Sound
           </Button> */}
-          {toolUiOutput && (
+          {toolUiOutput && toolUiOutput.type !== 'app' && (
             <Button
               onClick={clearToolOutput}
               variant="ghost"
@@ -533,18 +581,29 @@ export default function Home() {
           )}
         </div>
         <div className="flex-1 overflow-y-auto p-6">
-          {waitingForTool ? (
+          {isLoadingFinanceState ? (
+            <div className="h-full flex flex-col items-center justify-center text-gray-400 gap-3">
+              <div className="animate-spin rounded-full h-8 w-8 border-2 border-gray-300 border-t-blue-600" />
+              <p className="text-sm">Loading financial data...</p>
+            </div>
+          ) : waitingForTool ? (
             <div className="h-full flex flex-col items-center justify-center text-gray-400 gap-3">
               <div className="animate-spin rounded-full h-8 w-8 border-2 border-gray-300 border-t-blue-600" />
               <p className="text-sm">Processing...</p>
             </div>
-          ) : toolUiOutput ? (
+          ) : toolUiOutput && toolUiOutput.type !== 'app' ? (
             <ToolOutput output={toolUiOutput as ToolOutputType} websocket={wsRef.current} />
+          ) : financeState ? (
+            <FinanceApp
+              action={financeAction}
+              state={financeState}
+              isAgentSpeaking={isAgentSpeaking}
+            />
           ) : (
             <div className="h-full flex items-center justify-center text-gray-400 text-center">
               <div>
-                <p className="mb-2">Display Canvas</p>
-                <p className="text-sm">Nothing to show yet</p>
+                <p className="mb-2">Finance Dashboard</p>
+                <p className="text-sm">Unable to load financial data</p>
               </div>
             </div>
           )}
